@@ -35,6 +35,7 @@ export default function App() {
   });
 
   const [showOwnerTasks, setShowOwnerTasks] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -75,6 +76,7 @@ export default function App() {
   const closeModal = () => {
     setIsModalOpen(false);
     setEditingId(null);
+    setFormError(null);
     setFormData({
       type: 'General Task',
       description: '',
@@ -139,6 +141,7 @@ export default function App() {
 
   const handleAddMerchant = async (e: FormEvent) => {
     e.preventDefault();
+    setFormError(null);
     try {
       const response = await fetch('/api/merchants', {
         method: 'POST',
@@ -149,8 +152,12 @@ export default function App() {
         closeModal();
         setMerchantFormData({ name: '', email: '' });
         fetchData();
+      } else {
+        const data = await response.json().catch(() => ({}));
+        setFormError(data.error || `Server error (${response.status}). Please try again.`);
       }
     } catch (error) {
+      setFormError('Network error. Please check your connection and try again.');
       console.error('Error adding merchant:', error);
     }
   };
@@ -688,6 +695,11 @@ export default function App() {
                       onChange={e => setMerchantFormData({...merchantFormData, email: e.target.value})}
                     />
                   </div>
+                  {formError && (
+                    <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                      {formError}
+                    </div>
+                  )}
                   <button type="submit" className="btn-primary w-full py-4 text-lg">
                     Add Merchant
                   </button>
