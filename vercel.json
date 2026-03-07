@@ -8,10 +8,7 @@
     },
     {
       "src": "api/index.ts",
-      "use": "@vercel/node",
-      "config": {
-        "includeFiles": "node_modules/better-sqlite3/**"
-      }
+      "use": "@vercel/node"
     }
   ],
   "routes": [
