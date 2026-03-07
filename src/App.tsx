@@ -12,6 +12,8 @@ export default function App() {
   const [activeModal, setActiveModal] = useState<'task' | 'merchant' | 'buyer'>('task');
   const [selectedMerchantId, setSelectedMerchantId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingMerchantId, setEditingMerchantId] = useState<number | null>(null);
+  const [editingBuyerId, setEditingBuyerId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Form State
@@ -76,6 +78,8 @@ export default function App() {
   const closeModal = () => {
     setIsModalOpen(false);
     setEditingId(null);
+    setEditingMerchantId(null);
+    setEditingBuyerId(null);
     setFormError(null);
     setFormData({
       type: 'General Task',
@@ -84,6 +88,8 @@ export default function App() {
       merchant_id: '',
       buyer_id: ''
     });
+    setMerchantFormData({ name: '', email: '' });
+    setBuyerFormData({ name: '', region: '', merchant_id: '' });
   };
 
   const handleAddTask = async (e: FormEvent) => {
@@ -143,14 +149,15 @@ export default function App() {
     e.preventDefault();
     setFormError(null);
     try {
-      const response = await fetch('/api/merchants', {
-        method: 'POST',
+      const url = editingMerchantId ? `/api/merchants/${editingMerchantId}` : '/api/merchants';
+      const method = editingMerchantId ? 'PUT' : 'POST';
+      const response = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(merchantFormData)
       });
       if (response.ok) {
         closeModal();
-        setMerchantFormData({ name: '', email: '' });
         fetchData();
       } else {
         const data = await response.json().catch(() => ({}));
@@ -158,26 +165,61 @@ export default function App() {
       }
     } catch (error) {
       setFormError('Network error. Please check your connection and try again.');
-      console.error('Error adding merchant:', error);
+      console.error('Error saving merchant:', error);
     }
+  };
+
+  const handleDeleteMerchant = async (id: number) => {
+    if (!window.confirm('Delete this merchant? Their buyers and tasks will also be removed.')) return;
+    try {
+      await fetch(`/api/merchants/${id}`, { method: 'DELETE' });
+      fetchData();
+    } catch (error) {
+      console.error('Error deleting merchant:', error);
+    }
+  };
+
+  const handleEditMerchant = (merchant: Merchant) => {
+    setMerchantFormData({ name: merchant.name, email: merchant.email });
+    setEditingMerchantId(merchant.id);
+    setActiveModal('merchant');
+    setIsModalOpen(true);
   };
 
   const handleAddBuyer = async (e: FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch('/api/buyers', {
-        method: 'POST',
+      const url = editingBuyerId ? `/api/buyers/${editingBuyerId}` : '/api/buyers';
+      const method = editingBuyerId ? 'PUT' : 'POST';
+      const response = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(buyerFormData)
       });
       if (response.ok) {
         closeModal();
-        setBuyerFormData({ name: '', region: '', merchant_id: '' });
         fetchData();
       }
     } catch (error) {
-      console.error('Error adding buyer:', error);
+      console.error('Error saving buyer:', error);
     }
+  };
+
+  const handleDeleteBuyer = async (id: number) => {
+    if (!window.confirm('Delete this buyer?')) return;
+    try {
+      await fetch(`/api/buyers/${id}`, { method: 'DELETE' });
+      fetchData();
+    } catch (error) {
+      console.error('Error deleting buyer:', error);
+    }
+  };
+
+  const handleEditBuyer = (buyer: Buyer) => {
+    setBuyerFormData({ name: buyer.name, region: buyer.region, merchant_id: String(buyer.merchant_id) });
+    setEditingBuyerId(buyer.id);
+    setActiveModal('buyer');
+    setIsModalOpen(true);
   };
 
   const toggleStatus = async (id: number, currentStatus: string) => {
@@ -387,10 +429,10 @@ export default function App() {
             )}
           </>
         ) : view === 'merchants' ? (
-          <MerchantDirectory 
-            merchants={merchants} 
-            selectedId={selectedMerchantId} 
-            onSelect={setSelectedMerchantId} 
+          <MerchantDirectory
+            merchants={merchants}
+            selectedId={selectedMerchantId}
+            onSelect={setSelectedMerchantId}
             items={items}
             buyers={buyers}
             onToggle={toggleStatus}
@@ -405,6 +447,10 @@ export default function App() {
             }}
             onEdit={handleEditTask}
             onDelete={handleDeleteTask}
+            onEditMerchant={handleEditMerchant}
+            onDeleteMerchant={handleDeleteMerchant}
+            onEditBuyer={handleEditBuyer}
+            onDeleteBuyer={handleDeleteBuyer}
           />
         ) : (
           <CalendarView 
@@ -566,8 +612,8 @@ export default function App() {
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-bold">
                   {activeModal === 'task' && (editingId ? 'Edit Task' : 'Quick Add Task')}
-                  {activeModal === 'merchant' && 'Add New Merchant'}
-                  {activeModal === 'buyer' && 'Add New Buyer'}
+                  {activeModal === 'merchant' && (editingMerchantId ? 'Edit Merchant' : 'Add New Merchant')}
+                  {activeModal === 'buyer' && (editingBuyerId ? 'Edit Buyer' : 'Add New Buyer')}
                 </h2>
                 <button onClick={closeModal} className="p-2 bg-gray-100 rounded-full">
                   <X size={20} />
@@ -701,7 +747,7 @@ export default function App() {
                     </div>
                   )}
                   <button type="submit" className="btn-primary w-full py-4 text-lg">
-                    Add Merchant
+                    {editingMerchantId ? 'Save Changes' : 'Add Merchant'}
                   </button>
                 </form>
               )}
@@ -745,7 +791,7 @@ export default function App() {
                     </select>
                   </div>
                   <button type="submit" className="btn-primary w-full py-4 text-lg">
-                    Add Buyer
+                    {editingBuyerId ? 'Save Changes' : 'Add Buyer'}
                   </button>
                 </form>
               )}
@@ -961,16 +1007,20 @@ function TaskCard({ item, onToggle, onEdit, onDelete }: {
   );
 }
 
-function MerchantDirectory({ merchants, selectedId, onSelect, items, buyers, onToggle, onAddTask, onEdit, onDelete }: { 
-  merchants: Merchant[], 
-  selectedId: number | null, 
+function MerchantDirectory({ merchants, selectedId, onSelect, items, buyers, onToggle, onAddTask, onEdit, onDelete, onEditMerchant, onDeleteMerchant, onEditBuyer, onDeleteBuyer }: {
+  merchants: Merchant[],
+  selectedId: number | null,
   onSelect: (id: number | null) => void,
   items: ActionItem[],
   buyers: Buyer[],
   onToggle: (id: number, status: string) => Promise<void>,
   onAddTask: (merchantId: number) => void,
   onEdit: (item: ActionItem) => void,
-  onDelete: (id: number) => void
+  onDelete: (id: number) => void,
+  onEditMerchant: (merchant: Merchant) => void,
+  onDeleteMerchant: (id: number) => void,
+  onEditBuyer: (buyer: Buyer) => void,
+  onDeleteBuyer: (id: number) => void,
 }) {
   const [selectedBuyerId, setSelectedBuyerId] = useState<number | null>(null);
   
@@ -1133,22 +1183,40 @@ function MerchantDirectory({ merchants, selectedId, onSelect, items, buyers, onT
           <h3 className="font-bold text-lg px-1">Assigned Buyers</h3>
           <div className="grid grid-cols-1 gap-2">
             {merchantBuyers.map(b => (
-              <button 
-                key={b.id} 
-                onClick={() => setSelectedBuyerId(b.id)}
-                className="card flex justify-between items-center py-3 hover:border-brand-primary/30 transition-colors text-left"
+              <div
+                key={b.id}
+                className="card flex justify-between items-center py-3 hover:border-brand-primary/30 transition-colors"
               >
-                <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setSelectedBuyerId(b.id)}
+                  className="flex items-center gap-3 flex-1 text-left"
+                >
                   <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center text-xs font-bold text-gray-500">
                     {b.name.charAt(0)}
                   </div>
-                  <span className="font-medium">{b.name}</span>
+                  <div>
+                    <span className="font-medium">{b.name}</span>
+                    <span className="text-[10px] font-bold uppercase text-gray-400 tracking-widest ml-2">{b.region}</span>
+                  </div>
+                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => onEditBuyer(b)}
+                    className="p-1.5 text-gray-400 hover:text-brand-primary hover:bg-brand-primary/5 rounded-lg transition-colors"
+                    title="Edit Buyer"
+                  >
+                    <Edit2 size={14} />
+                  </button>
+                  <button
+                    onClick={() => onDeleteBuyer(b.id)}
+                    className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Delete Buyer"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                  <ChevronRight size={14} className="text-gray-300 ml-1" />
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold uppercase text-gray-400 tracking-widest">{b.region}</span>
-                  <ChevronRight size={14} className="text-gray-300" />
-                </div>
-              </button>
+              </div>
             ))}
           </div>
         </section>
@@ -1182,17 +1250,39 @@ function MerchantDirectory({ merchants, selectedId, onSelect, items, buyers, onT
       <h2 className="text-xl font-bold px-1">Merchant Directory</h2>
       <div className="grid gap-3">
         {merchants.map(m => (
-          <button 
-            key={m.id} 
-            onClick={() => onSelect(m.id)}
-            className="card flex justify-between items-center hover:border-brand-primary/30 transition-colors text-left"
+          <div
+            key={m.id}
+            className="card flex justify-between items-center hover:border-brand-primary/30 transition-colors"
           >
-            <div>
+            <button
+              onClick={() => onSelect(m.id)}
+              className="flex-1 text-left"
+            >
               <p className="font-bold">{m.name}</p>
               <p className="text-xs text-gray-500">{m.email}</p>
+            </button>
+            <div className="flex items-center gap-1">
+              {m.name !== 'Nandita' && (
+                <>
+                  <button
+                    onClick={() => onEditMerchant(m)}
+                    className="p-1.5 text-gray-400 hover:text-brand-primary hover:bg-brand-primary/5 rounded-lg transition-colors"
+                    title="Edit Merchant"
+                  >
+                    <Edit2 size={14} />
+                  </button>
+                  <button
+                    onClick={() => onDeleteMerchant(m.id)}
+                    className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Delete Merchant"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </>
+              )}
+              <ChevronRight size={20} className="text-gray-300 ml-1" />
             </div>
-            <ChevronRight size={20} className="text-gray-300" />
-          </button>
+          </div>
         ))}
       </div>
     </div>

@@ -121,6 +121,42 @@ app.delete("/api/action-items/:id", (req, res) => {
   res.json({ success: true });
 });
 
+app.put("/api/merchants/:id", (req, res) => {
+  const { name, email } = req.body;
+  const merchant = merchants.find(m => m.id === Number(req.params.id));
+  if (!merchant) return res.status(404).json({ error: 'Merchant not found.' });
+  if (!name) return res.status(400).json({ error: 'Name is required.' });
+  if (email && merchants.find(m => m.email === email && m.id !== merchant.id)) {
+    return res.status(400).json({ error: 'A merchant with this email already exists.' });
+  }
+  merchant.name = name;
+  merchant.email = email;
+  res.json({ success: true });
+});
+
+app.delete("/api/merchants/:id", (req, res) => {
+  const id = Number(req.params.id);
+  merchants = merchants.filter(m => m.id !== id);
+  buyers = buyers.filter(b => b.merchant_id !== id);
+  actionItems = actionItems.filter(a => a.merchant_id !== id);
+  res.json({ success: true });
+});
+
+app.put("/api/buyers/:id", (req, res) => {
+  const { name, region, merchant_id } = req.body;
+  const buyer = buyers.find(b => b.id === Number(req.params.id));
+  if (!buyer) return res.status(404).json({ error: 'Buyer not found.' });
+  buyer.name = name;
+  buyer.region = region;
+  buyer.merchant_id = Number(merchant_id);
+  res.json({ success: true });
+});
+
+app.delete("/api/buyers/:id", (req, res) => {
+  buyers = buyers.filter(b => b.id !== Number(req.params.id));
+  res.json({ success: true });
+});
+
 app.get("/api/merchants/:id/details", (req, res) => {
   const id = Number(req.params.id);
   const merchant = merchants.find(m => m.id === id);
