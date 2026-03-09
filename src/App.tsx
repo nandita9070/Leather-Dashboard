@@ -3,6 +3,47 @@ import { Plus, LayoutDashboard, Users, CheckCircle2, Clock, AlertCircle, Chevron
 import { motion, AnimatePresence } from 'motion/react';
 import { ActionItem, Merchant, Buyer, TaskType } from './types';
 
+// ─── LocalStorage persistence layer ──────────────────────────────────────────
+const KEYS = {
+  merchants: 'ld_merchants',
+  buyers: 'ld_buyers',
+  items: 'ld_action_items',
+  ids: 'ld_next_ids',
+} as const;
+
+const INIT_MERCHANTS: Merchant[] = [
+  { id: 1, name: 'Nandita', email: 'nandita@leatherops.com' },
+  { id: 2, name: 'John Doe', email: 'john@leatherops.com' },
+  { id: 3, name: 'Sarah Smith', email: 'sarah@leatherops.com' },
+];
+
+const INIT_BUYERS: Buyer[] = [
+  { id: 1, name: 'Nordic Styles', region: 'Europe', merchant_id: 2 },
+  { id: 2, name: 'Oz Leather Co', region: 'Australia', merchant_id: 2 },
+  { id: 3, name: 'Liberty Apparel', region: 'America', merchant_id: 3 },
+];
+
+function lsGet<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw !== null ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function lsSet<T>(key: string, value: T): void {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function initStorage() {
+  if (!localStorage.getItem(KEYS.merchants)) lsSet(KEYS.merchants, INIT_MERCHANTS);
+  if (!localStorage.getItem(KEYS.buyers)) lsSet(KEYS.buyers, INIT_BUYERS);
+  if (!localStorage.getItem(KEYS.items)) lsSet(KEYS.items, []);
+  if (!localStorage.getItem(KEYS.ids)) lsSet(KEYS.ids, { merchant: 4, buyer: 4, item: 1 });
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function App() {
   const [view, setView] = useState<'dashboard' | 'merchants' | 'calendar'>('dashboard');
   const [items, setItems] = useState<ActionItem[]>([]);
@@ -40,39 +81,37 @@ export default function App() {
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
+    initStorage();
     fetchData();
   }, []);
 
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      const [itemsRes, merchantsRes, buyersRes] = await Promise.all([
-        fetch('/api/action-items'),
-        fetch('/api/merchants'),
-        fetch('/api/buyers')
-      ]);
-      const itemsData = await itemsRes.json();
-      setItems(itemsData);
-      const merchantsData = await merchantsRes.json();
-      setMerchants(merchantsData);
-      setBuyers(await buyersRes.json());
+  const fetchData = () => {
+    const storedMerchants = lsGet<Merchant[]>(KEYS.merchants, INIT_MERCHANTS);
+    const storedBuyers = lsGet<Buyer[]>(KEYS.buyers, INIT_BUYERS);
+    const storedItems = lsGet<ActionItem[]>(KEYS.items, []);
 
-      // Ensure Nandita exists
-      if (!merchantsData.find((m: any) => m.name === 'Nandita')) {
-        await fetch('/api/merchants', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: 'Nandita', email: 'nandita@leatherops.com' })
-        });
-        // Re-fetch to get Nandita's ID
-        const updatedMerchantsRes = await fetch('/api/merchants');
-        setMerchants(await updatedMerchantsRes.json());
-      }
-    } catch (error) {
-      console.error('Error fetching data:', error);
-    } finally {
-      setLoading(false);
-    }
+    const buyersWithNames = storedBuyers.map(b => ({
+      ...b,
+      merchant_name: storedMerchants.find(m => m.id === b.merchant_id)?.name,
+    }));
+
+    const itemsWithNames = storedItems
+      .map(a => ({
+        ...a,
+        merchant_name: storedMerchants.find(m => m.id === a.merchant_id)?.name,
+        buyer_name: storedBuyers.find(b => b.id === a.buyer_id)?.name ?? null,
+      }))
+      .sort((a, b) => {
+        if (!a.due_date && !b.due_date) return 0;
+        if (!a.due_date) return 1;
+        if (!b.due_date) return -1;
+        return a.due_date.localeCompare(b.due_date);
+      });
+
+    setMerchants(storedMerchants);
+    setBuyers(buyersWithNames as Buyer[]);
+    setItems(itemsWithNames as ActionItem[]);
+    setLoading(false);
   };
 
   const closeModal = () => {
@@ -94,42 +133,44 @@ export default function App() {
 
   const handleAddTask = async (e: FormEvent) => {
     e.preventDefault();
-    try {
-      const isOwner = merchants.find(m => String(m.id) === formData.merchant_id)?.name === 'Nandita';
-      const taskData = {
-        ...formData,
-        due_date: formData.due_date || null,
-        buyer_id: isOwner ? null : (formData.buyer_id || null)
-      };
-      
-      const url = editingId ? `/api/action-items/${editingId}` : '/api/action-items';
-      const method = editingId ? 'PUT' : 'POST';
+    const storedItems = lsGet<ActionItem[]>(KEYS.items, []);
+    const isOwner = merchants.find(m => String(m.id) === formData.merchant_id)?.name === 'Nandita';
 
-      const response = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(taskData)
-      });
-      if (response.ok) {
-        closeModal();
-        fetchData();
-      }
-    } catch (error) {
-      console.error('Error saving task:', error);
+    if (editingId) {
+      lsSet(KEYS.items, storedItems.map(i =>
+        i.id === editingId
+          ? {
+              ...i,
+              type: formData.type,
+              description: formData.description,
+              due_date: formData.due_date || null,
+              merchant_id: Number(formData.merchant_id),
+              buyer_id: isOwner ? null : (formData.buyer_id ? Number(formData.buyer_id) : null),
+            }
+          : i
+      ));
+    } else {
+      const ids = lsGet(KEYS.ids, { merchant: 4, buyer: 4, item: 1 });
+      const item: ActionItem = {
+        id: ids.item,
+        type: formData.type,
+        description: formData.description,
+        due_date: formData.due_date || null,
+        merchant_id: Number(formData.merchant_id),
+        buyer_id: isOwner ? null : (formData.buyer_id ? Number(formData.buyer_id) : null),
+        status: 'Pending',
+        created_at: new Date().toISOString(),
+      };
+      lsSet(KEYS.items, [...storedItems, item]);
+      lsSet(KEYS.ids, { ...ids, item: ids.item + 1 });
     }
+    closeModal();
+    fetchData();
   };
 
   const handleDeleteTask = async (id: number) => {
-    try {
-      const response = await fetch(`/api/action-items/${id}`, {
-        method: 'DELETE'
-      });
-      if (response.ok) {
-        fetchData();
-      }
-    } catch (error) {
-      console.error('Error deleting task:', error);
-    }
+    lsSet(KEYS.items, lsGet<ActionItem[]>(KEYS.items, []).filter(a => a.id !== id));
+    fetchData();
   };
 
   const handleEditTask = (item: ActionItem) => {
@@ -148,35 +189,35 @@ export default function App() {
   const handleAddMerchant = async (e: FormEvent) => {
     e.preventDefault();
     setFormError(null);
-    try {
-      const url = editingMerchantId ? `/api/merchants/${editingMerchantId}` : '/api/merchants';
-      const method = editingMerchantId ? 'PUT' : 'POST';
-      const response = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(merchantFormData)
-      });
-      if (response.ok) {
-        closeModal();
-        fetchData();
-      } else {
-        const data = await response.json().catch(() => ({}));
-        setFormError(data.error || `Server error (${response.status}). Please try again.`);
+    const storedMerchants = lsGet<Merchant[]>(KEYS.merchants, INIT_MERCHANTS);
+
+    if (editingMerchantId) {
+      if (!merchantFormData.name) { setFormError('Name is required.'); return; }
+      if (merchantFormData.email && storedMerchants.find(m => m.email === merchantFormData.email && m.id !== editingMerchantId)) {
+        setFormError('A merchant with this email already exists.'); return;
       }
-    } catch (error) {
-      setFormError('Network error. Please check your connection and try again.');
-      console.error('Error saving merchant:', error);
+      lsSet(KEYS.merchants, storedMerchants.map(m =>
+        m.id === editingMerchantId ? { ...m, name: merchantFormData.name, email: merchantFormData.email } : m
+      ));
+    } else {
+      if (!merchantFormData.name) { setFormError('Name is required.'); return; }
+      if (merchantFormData.email && storedMerchants.find(m => m.email === merchantFormData.email)) {
+        setFormError('A merchant with this email already exists.'); return;
+      }
+      const ids = lsGet(KEYS.ids, { merchant: 4, buyer: 4, item: 1 });
+      lsSet(KEYS.merchants, [...storedMerchants, { id: ids.merchant, name: merchantFormData.name, email: merchantFormData.email }]);
+      lsSet(KEYS.ids, { ...ids, merchant: ids.merchant + 1 });
     }
+    closeModal();
+    fetchData();
   };
 
   const handleDeleteMerchant = async (id: number) => {
     if (!window.confirm('Delete this merchant? Their buyers and tasks will also be removed.')) return;
-    try {
-      await fetch(`/api/merchants/${id}`, { method: 'DELETE' });
-      fetchData();
-    } catch (error) {
-      console.error('Error deleting merchant:', error);
-    }
+    lsSet(KEYS.merchants, lsGet<Merchant[]>(KEYS.merchants, INIT_MERCHANTS).filter(m => m.id !== id));
+    lsSet(KEYS.buyers, lsGet<Buyer[]>(KEYS.buyers, INIT_BUYERS).filter(b => b.merchant_id !== id));
+    lsSet(KEYS.items, lsGet<ActionItem[]>(KEYS.items, []).filter(a => a.merchant_id !== id));
+    fetchData();
   };
 
   const handleEditMerchant = (merchant: Merchant) => {
@@ -188,31 +229,32 @@ export default function App() {
 
   const handleAddBuyer = async (e: FormEvent) => {
     e.preventDefault();
-    try {
-      const url = editingBuyerId ? `/api/buyers/${editingBuyerId}` : '/api/buyers';
-      const method = editingBuyerId ? 'PUT' : 'POST';
-      const response = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buyerFormData)
-      });
-      if (response.ok) {
-        closeModal();
-        fetchData();
-      }
-    } catch (error) {
-      console.error('Error saving buyer:', error);
+    const storedBuyers = lsGet<Buyer[]>(KEYS.buyers, INIT_BUYERS);
+
+    if (editingBuyerId) {
+      lsSet(KEYS.buyers, storedBuyers.map(b =>
+        b.id === editingBuyerId
+          ? { ...b, name: buyerFormData.name, region: buyerFormData.region, merchant_id: Number(buyerFormData.merchant_id) }
+          : b
+      ));
+    } else {
+      const ids = lsGet(KEYS.ids, { merchant: 4, buyer: 4, item: 1 });
+      lsSet(KEYS.buyers, [...storedBuyers, {
+        id: ids.buyer,
+        name: buyerFormData.name,
+        region: buyerFormData.region,
+        merchant_id: Number(buyerFormData.merchant_id),
+      }]);
+      lsSet(KEYS.ids, { ...ids, buyer: ids.buyer + 1 });
     }
+    closeModal();
+    fetchData();
   };
 
   const handleDeleteBuyer = async (id: number) => {
     if (!window.confirm('Delete this buyer?')) return;
-    try {
-      await fetch(`/api/buyers/${id}`, { method: 'DELETE' });
-      fetchData();
-    } catch (error) {
-      console.error('Error deleting buyer:', error);
-    }
+    lsSet(KEYS.buyers, lsGet<Buyer[]>(KEYS.buyers, INIT_BUYERS).filter(b => b.id !== id));
+    fetchData();
   };
 
   const handleEditBuyer = (buyer: Buyer) => {
@@ -224,16 +266,10 @@ export default function App() {
 
   const toggleStatus = async (id: number, currentStatus: string) => {
     const newStatus = currentStatus === 'Pending' ? 'Completed' : 'Pending';
-    try {
-      await fetch(`/api/action-items/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus })
-      });
-      fetchData();
-    } catch (error) {
-      console.error('Error updating status:', error);
-    }
+    lsSet(KEYS.items, lsGet<ActionItem[]>(KEYS.items, []).map(a =>
+      a.id === id ? { ...a, status: newStatus as 'Pending' | 'Completed' } : a
+    ));
+    fetchData();
   };
 
   const today = new Date().toISOString().split('T')[0];
