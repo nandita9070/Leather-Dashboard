@@ -3,47 +3,6 @@ import { Plus, LayoutDashboard, Users, CheckCircle2, Clock, AlertCircle, Chevron
 import { motion, AnimatePresence } from 'motion/react';
 import { ActionItem, Merchant, Buyer, TaskType } from './types';
 
-// ─── LocalStorage persistence layer ──────────────────────────────────────────
-const KEYS = {
-  merchants: 'ld_merchants',
-  buyers: 'ld_buyers',
-  items: 'ld_action_items',
-  ids: 'ld_next_ids',
-} as const;
-
-const INIT_MERCHANTS: Merchant[] = [
-  { id: 1, name: 'Nandita', email: 'nandita@leatherops.com' },
-  { id: 2, name: 'John Doe', email: 'john@leatherops.com' },
-  { id: 3, name: 'Sarah Smith', email: 'sarah@leatherops.com' },
-];
-
-const INIT_BUYERS: Buyer[] = [
-  { id: 1, name: 'Nordic Styles', region: 'Europe', merchant_id: 2 },
-  { id: 2, name: 'Oz Leather Co', region: 'Australia', merchant_id: 2 },
-  { id: 3, name: 'Liberty Apparel', region: 'America', merchant_id: 3 },
-];
-
-function lsGet<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw !== null ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function lsSet<T>(key: string, value: T): void {
-  localStorage.setItem(key, JSON.stringify(value));
-}
-
-function initStorage() {
-  if (!localStorage.getItem(KEYS.merchants)) lsSet(KEYS.merchants, INIT_MERCHANTS);
-  if (!localStorage.getItem(KEYS.buyers)) lsSet(KEYS.buyers, INIT_BUYERS);
-  if (!localStorage.getItem(KEYS.items)) lsSet(KEYS.items, []);
-  if (!localStorage.getItem(KEYS.ids)) lsSet(KEYS.ids, { merchant: 4, buyer: 4, item: 1 });
-}
-// ─────────────────────────────────────────────────────────────────────────────
-
 export default function App() {
   const [view, setView] = useState<'dashboard' | 'merchants' | 'calendar'>('dashboard');
   const [items, setItems] = useState<ActionItem[]>([]);
@@ -56,12 +15,13 @@ export default function App() {
   const [editingMerchantId, setEditingMerchantId] = useState<number | null>(null);
   const [editingBuyerId, setEditingBuyerId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   // Form State
   const [formData, setFormData] = useState({
     type: 'General Task' as TaskType,
     description: '',
-    due_date: '', // Default to empty for optional date
+    due_date: '',
     merchant_id: '',
     buyer_id: ''
   });
@@ -80,38 +40,28 @@ export default function App() {
   const [showOwnerTasks, setShowOwnerTasks] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  useEffect(() => {
-    initStorage();
-    fetchData();
-  }, []);
+  useEffect(() => { fetchData(); }, []);
 
-  const fetchData = () => {
-    const storedMerchants = lsGet<Merchant[]>(KEYS.merchants, INIT_MERCHANTS);
-    const storedBuyers = lsGet<Buyer[]>(KEYS.buyers, INIT_BUYERS);
-    const storedItems = lsGet<ActionItem[]>(KEYS.items, []);
-
-    const buyersWithNames = storedBuyers.map(b => ({
-      ...b,
-      merchant_name: storedMerchants.find(m => m.id === b.merchant_id)?.name,
-    }));
-
-    const itemsWithNames = storedItems
-      .map(a => ({
-        ...a,
-        merchant_name: storedMerchants.find(m => m.id === a.merchant_id)?.name,
-        buyer_name: storedBuyers.find(b => b.id === a.buyer_id)?.name ?? null,
-      }))
-      .sort((a, b) => {
-        if (!a.due_date && !b.due_date) return 0;
-        if (!a.due_date) return 1;
-        if (!b.due_date) return -1;
-        return a.due_date.localeCompare(b.due_date);
-      });
-
-    setMerchants(storedMerchants);
-    setBuyers(buyersWithNames as Buyer[]);
-    setItems(itemsWithNames as ActionItem[]);
-    setLoading(false);
+  const fetchData = async () => {
+    try {
+      const [itemsRes, merchantsRes, buyersRes] = await Promise.all([
+        fetch('/api/action-items'),
+        fetch('/api/merchants'),
+        fetch('/api/buyers'),
+      ]);
+      const [itemsData, merchantsData, buyersData] = await Promise.all([
+        itemsRes.json(),
+        merchantsRes.json(),
+        buyersRes.json(),
+      ]);
+      setItems(itemsData);
+      setMerchants(merchantsData);
+      setBuyers(buyersData);
+    } catch (err) {
+      console.error('Failed to load data:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const closeModal = () => {
@@ -133,44 +83,37 @@ export default function App() {
 
   const handleAddTask = async (e: FormEvent) => {
     e.preventDefault();
-    const storedItems = lsGet<ActionItem[]>(KEYS.items, []);
+    setSaving(true);
     const isOwner = merchants.find(m => String(m.id) === formData.merchant_id)?.name === 'Nandita';
-
-    if (editingId) {
-      lsSet(KEYS.items, storedItems.map(i =>
-        i.id === editingId
-          ? {
-              ...i,
-              type: formData.type,
-              description: formData.description,
-              due_date: formData.due_date || null,
-              merchant_id: Number(formData.merchant_id),
-              buyer_id: isOwner ? null : (formData.buyer_id ? Number(formData.buyer_id) : null),
-            }
-          : i
-      ));
-    } else {
-      const ids = lsGet(KEYS.ids, { merchant: 4, buyer: 4, item: 1 });
-      const item: ActionItem = {
-        id: ids.item,
-        type: formData.type,
-        description: formData.description,
-        due_date: formData.due_date || null,
-        merchant_id: Number(formData.merchant_id),
-        buyer_id: isOwner ? null : (formData.buyer_id ? Number(formData.buyer_id) : null),
-        status: 'Pending',
-        created_at: new Date().toISOString(),
-      };
-      lsSet(KEYS.items, [...storedItems, item]);
-      lsSet(KEYS.ids, { ...ids, item: ids.item + 1 });
+    const body = {
+      type: formData.type,
+      description: formData.description,
+      due_date: formData.due_date || null,
+      merchant_id: Number(formData.merchant_id),
+      buyer_id: isOwner ? null : (formData.buyer_id ? Number(formData.buyer_id) : null),
+    };
+    try {
+      if (editingId) {
+        await fetch(`/api/action-items/${editingId}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+      } else {
+        await fetch('/api/action-items', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+      }
+      closeModal();
+      await fetchData();
+    } catch (err) {
+      console.error('Failed to save task:', err);
+    } finally {
+      setSaving(false);
     }
-    closeModal();
-    fetchData();
   };
 
   const handleDeleteTask = async (id: number) => {
-    lsSet(KEYS.items, lsGet<ActionItem[]>(KEYS.items, []).filter(a => a.id !== id));
-    fetchData();
+    await fetch(`/api/action-items/${id}`, { method: 'DELETE' });
+    await fetchData();
   };
 
   const handleEditTask = (item: ActionItem) => {
@@ -189,35 +132,29 @@ export default function App() {
   const handleAddMerchant = async (e: FormEvent) => {
     e.preventDefault();
     setFormError(null);
-    const storedMerchants = lsGet<Merchant[]>(KEYS.merchants, INIT_MERCHANTS);
-
-    if (editingMerchantId) {
-      if (!merchantFormData.name) { setFormError('Name is required.'); return; }
-      if (merchantFormData.email && storedMerchants.find(m => m.email === merchantFormData.email && m.id !== editingMerchantId)) {
-        setFormError('A merchant with this email already exists.'); return;
-      }
-      lsSet(KEYS.merchants, storedMerchants.map(m =>
-        m.id === editingMerchantId ? { ...m, name: merchantFormData.name, email: merchantFormData.email } : m
-      ));
-    } else {
-      if (!merchantFormData.name) { setFormError('Name is required.'); return; }
-      if (merchantFormData.email && storedMerchants.find(m => m.email === merchantFormData.email)) {
-        setFormError('A merchant with this email already exists.'); return;
-      }
-      const ids = lsGet(KEYS.ids, { merchant: 4, buyer: 4, item: 1 });
-      lsSet(KEYS.merchants, [...storedMerchants, { id: ids.merchant, name: merchantFormData.name, email: merchantFormData.email }]);
-      lsSet(KEYS.ids, { ...ids, merchant: ids.merchant + 1 });
+    setSaving(true);
+    try {
+      const url = editingMerchantId ? `/api/merchants/${editingMerchantId}` : '/api/merchants';
+      const method = editingMerchantId ? 'PUT' : 'POST';
+      const res = await fetch(url, {
+        method, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: merchantFormData.name, email: merchantFormData.email }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setFormError(data.error ?? 'Something went wrong.'); return; }
+      closeModal();
+      await fetchData();
+    } catch (err) {
+      setFormError('Network error. Please try again.');
+    } finally {
+      setSaving(false);
     }
-    closeModal();
-    fetchData();
   };
 
   const handleDeleteMerchant = async (id: number) => {
     if (!window.confirm('Delete this merchant? Their buyers and tasks will also be removed.')) return;
-    lsSet(KEYS.merchants, lsGet<Merchant[]>(KEYS.merchants, INIT_MERCHANTS).filter(m => m.id !== id));
-    lsSet(KEYS.buyers, lsGet<Buyer[]>(KEYS.buyers, INIT_BUYERS).filter(b => b.merchant_id !== id));
-    lsSet(KEYS.items, lsGet<ActionItem[]>(KEYS.items, []).filter(a => a.merchant_id !== id));
-    fetchData();
+    await fetch(`/api/merchants/${id}`, { method: 'DELETE' });
+    await fetchData();
   };
 
   const handleEditMerchant = (merchant: Merchant) => {
@@ -229,32 +166,27 @@ export default function App() {
 
   const handleAddBuyer = async (e: FormEvent) => {
     e.preventDefault();
-    const storedBuyers = lsGet<Buyer[]>(KEYS.buyers, INIT_BUYERS);
-
-    if (editingBuyerId) {
-      lsSet(KEYS.buyers, storedBuyers.map(b =>
-        b.id === editingBuyerId
-          ? { ...b, name: buyerFormData.name, region: buyerFormData.region, merchant_id: Number(buyerFormData.merchant_id) }
-          : b
-      ));
-    } else {
-      const ids = lsGet(KEYS.ids, { merchant: 4, buyer: 4, item: 1 });
-      lsSet(KEYS.buyers, [...storedBuyers, {
-        id: ids.buyer,
-        name: buyerFormData.name,
-        region: buyerFormData.region,
-        merchant_id: Number(buyerFormData.merchant_id),
-      }]);
-      lsSet(KEYS.ids, { ...ids, buyer: ids.buyer + 1 });
+    setSaving(true);
+    try {
+      const url = editingBuyerId ? `/api/buyers/${editingBuyerId}` : '/api/buyers';
+      const method = editingBuyerId ? 'PUT' : 'POST';
+      await fetch(url, {
+        method, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: buyerFormData.name, region: buyerFormData.region, merchant_id: buyerFormData.merchant_id }),
+      });
+      closeModal();
+      await fetchData();
+    } catch (err) {
+      console.error('Failed to save buyer:', err);
+    } finally {
+      setSaving(false);
     }
-    closeModal();
-    fetchData();
   };
 
   const handleDeleteBuyer = async (id: number) => {
     if (!window.confirm('Delete this buyer?')) return;
-    lsSet(KEYS.buyers, lsGet<Buyer[]>(KEYS.buyers, INIT_BUYERS).filter(b => b.id !== id));
-    fetchData();
+    await fetch(`/api/buyers/${id}`, { method: 'DELETE' });
+    await fetchData();
   };
 
   const handleEditBuyer = (buyer: Buyer) => {
@@ -266,10 +198,11 @@ export default function App() {
 
   const toggleStatus = async (id: number, currentStatus: string) => {
     const newStatus = currentStatus === 'Pending' ? 'Completed' : 'Pending';
-    lsSet(KEYS.items, lsGet<ActionItem[]>(KEYS.items, []).map(a =>
-      a.id === id ? { ...a, status: newStatus as 'Pending' | 'Completed' } : a
-    ));
-    fetchData();
+    await fetch(`/api/action-items/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus }),
+    });
+    await fetchData();
   };
 
   const today = new Date().toISOString().split('T')[0];
@@ -747,8 +680,8 @@ export default function App() {
                     />
                   </div>
 
-                  <button type="submit" className="btn-primary w-full py-4 text-lg">
-                    Save Task
+                  <button type="submit" disabled={saving} className="btn-primary w-full py-4 text-lg disabled:opacity-60">
+                    {saving ? 'Saving…' : 'Save Task'}
                   </button>
                 </form>
               )}
@@ -782,8 +715,8 @@ export default function App() {
                       {formError}
                     </div>
                   )}
-                  <button type="submit" className="btn-primary w-full py-4 text-lg">
-                    {editingMerchantId ? 'Save Changes' : 'Add Merchant'}
+                  <button type="submit" disabled={saving} className="btn-primary w-full py-4 text-lg disabled:opacity-60">
+                    {saving ? 'Saving…' : (editingMerchantId ? 'Save Changes' : 'Add Merchant')}
                   </button>
                 </form>
               )}
@@ -826,8 +759,8 @@ export default function App() {
                       ))}
                     </select>
                   </div>
-                  <button type="submit" className="btn-primary w-full py-4 text-lg">
-                    {editingBuyerId ? 'Save Changes' : 'Add Buyer'}
+                  <button type="submit" disabled={saving} className="btn-primary w-full py-4 text-lg disabled:opacity-60">
+                    {saving ? 'Saving…' : (editingBuyerId ? 'Save Changes' : 'Add Buyer')}
                   </button>
                 </form>
               )}
