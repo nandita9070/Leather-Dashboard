@@ -15,7 +15,9 @@ export default function App() {
   const [editingMerchantId, setEditingMerchantId] = useState<number | null>(null);
   const [editingBuyerId, setEditingBuyerId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [syncWarning, setSyncWarning] = useState<string | null>(null);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -44,11 +46,13 @@ export default function App() {
 
   const fetchData = async () => {
     try {
+      setFetchError(false);
       const [itemsRes, merchantsRes, buyersRes] = await Promise.all([
         fetch('/api/action-items'),
         fetch('/api/merchants'),
         fetch('/api/buyers'),
       ]);
+      if (!itemsRes.ok || !merchantsRes.ok || !buyersRes.ok) throw new Error('API error');
       const [itemsData, merchantsData, buyersData] = await Promise.all([
         itemsRes.json(),
         merchantsRes.json(),
@@ -59,8 +63,16 @@ export default function App() {
       setBuyers(buyersData);
     } catch (err) {
       console.error('Failed to load data:', err);
+      setFetchError(true);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const warnIfSheetsDown = (data: { sheetsSync?: boolean }) => {
+    if (data.sheetsSync === false) {
+      setSyncWarning('Saved to Backup (Supabase), but Google Sheets sync pending.');
+      setTimeout(() => setSyncWarning(null), 8000);
     }
   };
 
@@ -93,15 +105,13 @@ export default function App() {
       buyer_id: isOwner ? null : (formData.buyer_id ? Number(formData.buyer_id) : null),
     };
     try {
-      if (editingId) {
-        await fetch(`/api/action-items/${editingId}`, {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-        });
-      } else {
-        await fetch('/api/action-items', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-        });
-      }
+      const url = editingId ? `/api/action-items/${editingId}` : '/api/action-items';
+      const method = editingId ? 'PUT' : 'POST';
+      const res = await fetch(url, {
+        method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      warnIfSheetsDown(data);
       closeModal();
       await fetchData();
     } catch (err) {
@@ -112,7 +122,8 @@ export default function App() {
   };
 
   const handleDeleteTask = async (id: number) => {
-    await fetch(`/api/action-items/${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/action-items/${id}`, { method: 'DELETE' });
+    warnIfSheetsDown(await res.json());
     await fetchData();
   };
 
@@ -142,6 +153,7 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) { setFormError(data.error ?? 'Something went wrong.'); return; }
+      warnIfSheetsDown(data);
       closeModal();
       await fetchData();
     } catch (err) {
@@ -153,7 +165,8 @@ export default function App() {
 
   const handleDeleteMerchant = async (id: number) => {
     if (!window.confirm('Delete this merchant? Their buyers and tasks will also be removed.')) return;
-    await fetch(`/api/merchants/${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/merchants/${id}`, { method: 'DELETE' });
+    warnIfSheetsDown(await res.json());
     await fetchData();
   };
 
@@ -170,10 +183,11 @@ export default function App() {
     try {
       const url = editingBuyerId ? `/api/buyers/${editingBuyerId}` : '/api/buyers';
       const method = editingBuyerId ? 'PUT' : 'POST';
-      await fetch(url, {
+      const res = await fetch(url, {
         method, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: buyerFormData.name, region: buyerFormData.region, merchant_id: buyerFormData.merchant_id }),
       });
+      warnIfSheetsDown(await res.json());
       closeModal();
       await fetchData();
     } catch (err) {
@@ -185,7 +199,8 @@ export default function App() {
 
   const handleDeleteBuyer = async (id: number) => {
     if (!window.confirm('Delete this buyer?')) return;
-    await fetch(`/api/buyers/${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/buyers/${id}`, { method: 'DELETE' });
+    warnIfSheetsDown(await res.json());
     await fetchData();
   };
 
@@ -198,10 +213,11 @@ export default function App() {
 
   const toggleStatus = async (id: number, currentStatus: string) => {
     const newStatus = currentStatus === 'Pending' ? 'Completed' : 'Pending';
-    await fetch(`/api/action-items/${id}`, {
+    const res = await fetch(`/api/action-items/${id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus }),
     });
+    warnIfSheetsDown(await res.json());
     await fetchData();
   };
 
@@ -252,8 +268,44 @@ export default function App() {
         </div>
       </header>
 
+      {/* Sheets sync warning banner */}
+      <AnimatePresence>
+        {syncWarning && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="bg-amber-50 border-b border-amber-200 px-4 py-3"
+          >
+            <div className="max-w-2xl mx-auto flex items-center justify-between gap-3">
+              <span className="text-sm text-amber-800">{syncWarning}</span>
+              <button onClick={() => setSyncWarning(null)} className="text-amber-500 hover:text-amber-700 flex-shrink-0">
+                <X size={16} />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <main className="max-w-2xl mx-auto p-4 space-y-6">
-        {view === 'dashboard' ? (
+        {/* Loading state */}
+        {loading ? (
+          <div className="flex justify-center items-center py-24">
+            <div className="w-8 h-8 border-4 border-brand-primary border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : fetchError ? (
+          <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
+            <AlertCircle size={40} className="text-red-400" />
+            <p className="text-gray-600 font-medium">Could not connect to the server.</p>
+            <p className="text-sm text-gray-400">Your data is safe in Supabase.</p>
+            <button
+              onClick={() => { setLoading(true); fetchData(); }}
+              className="px-5 py-2 bg-brand-primary text-white rounded-xl text-sm font-semibold"
+            >
+              Retry
+            </button>
+          </div>
+        ) : view === 'dashboard' ? (
           <>
             {/* Owner's Tile */}
             <section className="px-1">
@@ -422,9 +474,9 @@ export default function App() {
             onDeleteBuyer={handleDeleteBuyer}
           />
         ) : (
-          <CalendarView 
-            items={items} 
-            onToggle={toggleStatus} 
+          <CalendarView
+            items={items}
+            onToggle={toggleStatus}
             onEdit={handleEditTask}
             onDelete={handleDeleteTask}
           />
