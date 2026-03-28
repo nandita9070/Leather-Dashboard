@@ -81,17 +81,13 @@ async function syncToSheets(): Promise<void> {
   ]);
 }
 
-// Runs Sheets sync after a Supabase mutation; returns true if Sheets sync succeeded
+// Runs Sheets sync in background — does NOT block the response
+// Supabase is the source of truth; Sheets is a background backup only
 async function withSheetsSync<T extends object>(supabaseWork: () => Promise<T>): Promise<T & { sheetsSync: boolean }> {
   const result = await supabaseWork();
-  let sheetsSync = true;
-  try {
-    await syncToSheets();
-  } catch (err) {
-    console.error('Google Sheets sync failed (Supabase write succeeded):', err);
-    sheetsSync = false;
-  }
-  return { ...result, sheetsSync };
+  // Fire and forget — don't await, so the UI responds immediately
+  syncToSheets().catch(err => console.error('Google Sheets sync failed (Supabase write succeeded):', err));
+  return { ...result, sheetsSync: true };
 }
 
 // ─── Meta helpers ─────────────────────────────────────────────────────────────
