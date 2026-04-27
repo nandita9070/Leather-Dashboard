@@ -1,5 +1,5 @@
 import React, { useState, useEffect, FormEvent } from 'react';
-import { Plus, LayoutDashboard, Users, CheckCircle2, Clock, AlertCircle, ChevronRight, X, Calendar as CalendarIcon, User, Briefcase, Package, ChevronLeft, Trash2, Edit2 } from 'lucide-react';
+import { Plus, LayoutDashboard, Users, CheckCircle2, Clock, AlertCircle, ChevronRight, X, Calendar as CalendarIcon, User, Briefcase, Package, ChevronLeft, Trash2, Edit2, ChevronDown, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ActionItem, Merchant, Buyer, TaskType } from './types';
 
@@ -41,6 +41,9 @@ export default function App() {
 
   const [showOwnerTasks, setShowOwnerTasks] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [isCompletedOpen, setIsCompletedOpen] = useState(false);
+  const [isOwnerCompletedOpen, setIsOwnerCompletedOpen] = useState(false);
+  const [selectedCompletedIds, setSelectedCompletedIds] = useState<Set<number>>(new Set());
 
   useEffect(() => { fetchData(); }, []);
 
@@ -218,6 +221,13 @@ export default function App() {
       body: JSON.stringify({ status: newStatus }),
     });
     warnIfSheetsDown(await res.json());
+    await fetchData();
+  };
+
+  const handleBulkDeleteCompleted = async () => {
+    if (!window.confirm(`Delete ${selectedCompletedIds.size} completed task${selectedCompletedIds.size > 1 ? 's' : ''}? This cannot be undone.`)) return;
+    await Promise.all([...selectedCompletedIds].map(id => fetch(`/api/action-items/${id}`, { method: 'DELETE' })));
+    setSelectedCompletedIds(new Set());
     await fetchData();
   };
 
@@ -426,26 +436,61 @@ export default function App() {
             {/* Recently Completed Section */}
             {completed.length > 0 && (
               <section className="space-y-3">
-                <div className="flex items-center gap-2 text-green-600 font-semibold px-1">
-                  <CheckCircle2 size={18} />
-                  <h2>Recently Completed ({completed.length})</h2>
-                </div>
-                <div className="space-y-2 opacity-60">
-                  {completed.slice(0, 10).map(item => (
-                    <TaskCard 
-                      key={item.id} 
-                      item={item} 
-                      onToggle={() => toggleStatus(item.id, item.status)} 
-                      onEdit={() => handleEditTask(item)}
-                      onDelete={() => handleDeleteTask(item.id)}
-                    />
-                  ))}
-                  {completed.length > 10 && (
-                    <p className="text-center text-xs text-gray-400 py-2 italic">
-                      Showing last 10 completed items. View Calendar for full history.
-                    </p>
+                <div className="flex items-center justify-between px-1">
+                  <button
+                    onClick={() => { setIsCompletedOpen(o => !o); setSelectedCompletedIds(new Set()); }}
+                    className="flex items-center gap-2 text-green-600 font-semibold"
+                  >
+                    <CheckCircle2 size={18} />
+                    <h2>Recently Completed ({completed.length})</h2>
+                    <ChevronDown size={16} className={`transition-transform duration-200 ${isCompletedOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {isCompletedOpen && selectedCompletedIds.size > 0 && (
+                    <button
+                      onClick={handleBulkDeleteCompleted}
+                      className="text-xs font-bold text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-full transition-colors"
+                    >
+                      Delete Selected ({selectedCompletedIds.size})
+                    </button>
                   )}
                 </div>
+                {isCompletedOpen && (
+                  <>
+                    <div className="flex items-center px-1">
+                      <button
+                        onClick={() => {
+                          if (selectedCompletedIds.size === completed.length) {
+                            setSelectedCompletedIds(new Set());
+                          } else {
+                            setSelectedCompletedIds(new Set(completed.map(i => i.id)));
+                          }
+                        }}
+                        className="text-xs font-bold text-gray-400 hover:text-gray-600 transition-colors"
+                      >
+                        {selectedCompletedIds.size === completed.length ? 'Deselect All' : 'Select All'}
+                      </button>
+                    </div>
+                    <div className="space-y-2 opacity-75">
+                      {completed.map(item => (
+                        <TaskCard
+                          key={item.id}
+                          item={item}
+                          onToggle={() => toggleStatus(item.id, item.status)}
+                          onEdit={() => handleEditTask(item)}
+                          onDelete={() => handleDeleteTask(item.id)}
+                          onRestore={() => toggleStatus(item.id, item.status)}
+                          showCheckbox
+                          isSelected={selectedCompletedIds.has(item.id)}
+                          onSelect={(id) => setSelectedCompletedIds(prev => {
+                            const next = new Set(prev);
+                            next.has(id) ? next.delete(id) : next.add(id);
+                            return next;
+                          })}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
               </section>
             )}
           </>
@@ -576,18 +621,27 @@ export default function App() {
 
                 {ownerCompleted.length > 0 && (
                   <section className="space-y-3">
-                    <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 px-1">Recently Completed</h3>
-                    <div className="space-y-2 opacity-60">
-                      {ownerCompleted.slice(0, 5).map(item => (
-                        <TaskCard 
-                          key={item.id} 
-                          item={item} 
-                          onToggle={() => toggleStatus(item.id, item.status)} 
-                          onEdit={() => { setShowOwnerTasks(false); handleEditTask(item); }}
-                          onDelete={() => handleDeleteTask(item.id)}
-                        />
-                      ))}
-                    </div>
+                    <button
+                      onClick={() => setIsOwnerCompletedOpen(o => !o)}
+                      className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-gray-400 px-1"
+                    >
+                      <span>Recently Completed ({ownerCompleted.length})</span>
+                      <ChevronDown size={14} className={`transition-transform duration-200 ${isOwnerCompletedOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    {isOwnerCompletedOpen && (
+                      <div className="space-y-2 opacity-75">
+                        {ownerCompleted.map(item => (
+                          <TaskCard
+                            key={item.id}
+                            item={item}
+                            onToggle={() => toggleStatus(item.id, item.status)}
+                            onEdit={() => { setShowOwnerTasks(false); handleEditTask(item); }}
+                            onDelete={() => handleDeleteTask(item.id)}
+                            onRestore={() => toggleStatus(item.id, item.status)}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </section>
                 )}
               </div>
@@ -966,23 +1020,37 @@ function CalendarView({ items, onToggle, onEdit, onDelete }: {
   );
 }
 
-function TaskCard({ item, onToggle, onEdit, onDelete }: { 
-  item: ActionItem, 
-  onToggle: () => Promise<void> | void, 
+function TaskCard({ item, onToggle, onEdit, onDelete, onRestore, showCheckbox, isSelected, onSelect }: {
+  item: ActionItem,
+  onToggle: () => Promise<void> | void,
   onEdit?: () => void,
   onDelete?: () => void,
-  key?: React.Key 
+  onRestore?: () => void,
+  showCheckbox?: boolean,
+  isSelected?: boolean,
+  onSelect?: (id: number) => void,
+  key?: React.Key
 }) {
   return (
-    <motion.div 
+    <motion.div
       layout
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="card flex items-start gap-4 group relative"
+      className="card flex items-start gap-3 group relative"
     >
-      <button 
+      {showCheckbox && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onSelect?.(item.id); }}
+          className={`mt-1 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors flex-shrink-0 ${
+            isSelected ? 'bg-brand-primary border-brand-primary' : 'border-gray-300 hover:border-brand-primary'
+          }`}
+        >
+          {isSelected && <CheckCircle2 size={11} className="text-white" />}
+        </button>
+      )}
+      <button
         onClick={onToggle}
-        className={`mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
+        className={`mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors flex-shrink-0 ${
           item.status === 'Completed' ? 'bg-green-500 border-green-500 text-white' : 'border-gray-300 hover:border-brand-primary'
         }`}
       >
@@ -1003,10 +1071,19 @@ function TaskCard({ item, onToggle, onEdit, onDelete }: {
           {item.due_date && <span className="flex items-center gap-1"><CalendarIcon size={12} /> {item.due_date}</span>}
         </div>
       </div>
-      
+
       <div className="absolute top-3 right-3 flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+        {onRestore && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onRestore(); }}
+            className="p-1.5 text-gray-400 hover:text-brand-primary hover:bg-brand-primary/5 rounded-lg transition-colors"
+            title="Restore to Pending"
+          >
+            <RotateCcw size={14} />
+          </button>
+        )}
         {onEdit && (
-          <button 
+          <button
             onClick={(e) => { e.stopPropagation(); onEdit(); }}
             className="p-1.5 text-gray-400 hover:text-brand-primary hover:bg-brand-primary/5 rounded-lg transition-colors"
             title="Edit Task"
@@ -1015,7 +1092,7 @@ function TaskCard({ item, onToggle, onEdit, onDelete }: {
           </button>
         )}
         {onDelete && (
-          <button 
+          <button
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
             className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
             title="Delete Task"
@@ -1044,6 +1121,8 @@ function MerchantDirectory({ merchants, selectedId, onSelect, items, buyers, onT
   onDeleteBuyer: (id: number) => void,
 }) {
   const [selectedBuyerId, setSelectedBuyerId] = useState<number | null>(null);
+  const [isMerchantCompletedOpen, setIsMerchantCompletedOpen] = useState(false);
+  const [isBuyerCompletedOpen, setIsBuyerCompletedOpen] = useState(false);
   
   const selectedMerchant = merchants.find(m => m.id === selectedId);
   const merchantBuyers = buyers.filter(b => b.merchant_id === selectedId);
@@ -1099,21 +1178,28 @@ function MerchantDirectory({ merchants, selectedId, onSelect, items, buyers, onT
 
           {buyerCompleted.length > 0 && (
             <section className="space-y-3">
-              <div className="flex items-center gap-2 text-green-600 font-bold px-1">
+              <button
+                onClick={() => setIsBuyerCompletedOpen(o => !o)}
+                className="flex items-center gap-2 text-green-600 font-bold px-1"
+              >
                 <CheckCircle2 size={18} />
                 <h3>Completed History ({buyerCompleted.length})</h3>
-              </div>
-              <div className="space-y-2 opacity-60">
-                {buyerCompleted.map(item => (
-                  <TaskCard 
-                    key={item.id} 
-                    item={item} 
-                    onToggle={() => onToggle(item.id, item.status)} 
-                    onEdit={() => onEdit(item)}
-                    onDelete={() => onDelete(item.id)}
-                  />
-                ))}
-              </div>
+                <ChevronDown size={16} className={`transition-transform duration-200 ${isBuyerCompletedOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {isBuyerCompletedOpen && (
+                <div className="space-y-2 opacity-75">
+                  {buyerCompleted.map(item => (
+                    <TaskCard
+                      key={item.id}
+                      item={item}
+                      onToggle={() => onToggle(item.id, item.status)}
+                      onEdit={() => onEdit(item)}
+                      onDelete={() => onDelete(item.id)}
+                      onRestore={() => onToggle(item.id, item.status)}
+                    />
+                  ))}
+                </div>
+              )}
             </section>
           )}
         </motion.div>
@@ -1245,21 +1331,28 @@ function MerchantDirectory({ merchants, selectedId, onSelect, items, buyers, onT
         {/* Completed History Section */}
         {completedItems.length > 0 && (
           <section className="space-y-3">
-            <div className="flex items-center gap-2 text-green-600 font-bold px-1">
+            <button
+              onClick={() => setIsMerchantCompletedOpen(o => !o)}
+              className="flex items-center gap-2 text-green-600 font-bold px-1"
+            >
               <CheckCircle2 size={18} />
               <h3>Completed History ({completedItems.length})</h3>
-            </div>
-            <div className="space-y-2 opacity-60">
-              {completedItems.slice(0, 5).map(item => (
-                <TaskCard 
-                  key={item.id} 
-                  item={item} 
-                  onToggle={() => onToggle(item.id, item.status)} 
-                  onEdit={() => onEdit(item)}
-                  onDelete={() => onDelete(item.id)}
-                />
-              ))}
-            </div>
+              <ChevronDown size={16} className={`transition-transform duration-200 ${isMerchantCompletedOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {isMerchantCompletedOpen && (
+              <div className="space-y-2 opacity-75">
+                {completedItems.map(item => (
+                  <TaskCard
+                    key={item.id}
+                    item={item}
+                    onToggle={() => onToggle(item.id, item.status)}
+                    onEdit={() => onEdit(item)}
+                    onDelete={() => onDelete(item.id)}
+                    onRestore={() => onToggle(item.id, item.status)}
+                  />
+                ))}
+              </div>
+            )}
           </section>
         )}
       </motion.div>

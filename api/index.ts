@@ -1,6 +1,7 @@
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
 import { google } from "googleapis";
+import nodemailer from "nodemailer";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Merchant { id: number; name: string; email: string }
@@ -300,6 +301,95 @@ app.delete('/api/action-items/:id', async (req, res) => {
     const out = await withSheetsSync(async () => ({ success: true }));
     res.json(out);
   } catch (err) { res.status(500).json({ error: String(err) }); }
+});
+
+// ─── Email Reminders (Vercel Cron: daily at 10:00 AM IST = 04:30 UTC) ─────────
+app.get('/api/send-reminders', async (req, res) => {
+  // Security: Vercel sends Authorization: Bearer <CRON_SECRET>; also accept x-cron-secret for local testing
+  const authHeader = req.headers['authorization'];
+  const customHeader = req.headers['x-cron-secret'];
+  const validBearer = authHeader === `Bearer ${process.env.CRON_SECRET}`;
+  const validCustom = customHeader === process.env.CRON_SECRET;
+  if (!validBearer && !validCustom) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    // Compute today's date in IST (UTC+5:30)
+    const nowUtc = new Date();
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const nowIst = new Date(nowUtc.getTime() + istOffset);
+    const todayIst = nowIst.toISOString().split('T')[0];
+
+    // Fetch all pending tasks due today along with merchant emails
+    const { data: tasks, error: tasksError } = await supabase
+      .from('factory_entries')
+      .select('*, merchants!inner(name, email), buyers(name)')
+      .eq('due_date', todayIst)
+      .eq('status', 'Pending');
+
+    if (tasksError) throw tasksError;
+    if (!tasks || tasks.length === 0) {
+      return res.json({ sent: 0, message: 'No tasks due today.' });
+    }
+
+    // Group tasks by merchant
+    const byMerchant = new Map<string, { name: string; email: string; tasks: typeof tasks }>();
+    for (const task of tasks) {
+      const merchant = task.merchants as { name: string; email: string };
+      if (!merchant?.email) continue;
+      if (!byMerchant.has(merchant.email)) {
+        byMerchant.set(merchant.email, { name: merchant.name, email: merchant.email, tasks: [] });
+      }
+      byMerchant.get(merchant.email)!.tasks.push(task);
+    }
+
+    if (byMerchant.size === 0) {
+      return res.json({ sent: 0, message: 'No merchants with email addresses for today\'s tasks.' });
+    }
+
+    // Set up Gmail SMTP transporter
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.GMAIL_USER,
+        pass: process.env.GMAIL_APP_PASSWORD,
+      },
+    });
+
+    let sent = 0;
+    const errors: string[] = [];
+
+    for (const { name, email, tasks: merchantTasks } of byMerchant.values()) {
+      const taskLines = merchantTasks.map(t => {
+        const buyer = t.buyers as { name: string } | null;
+        const buyerLine = buyer?.name ? `Buyer: ${buyer.name}\n` : '';
+        return `──────────────────────────────\n${t.type} — ${t.description}\n${buyerLine}Due: ${t.due_date}`;
+      }).join('\n');
+
+      const subject = merchantTasks.length === 1
+        ? `Task Due Today: ${merchantTasks[0].description}`
+        : `${merchantTasks.length} Tasks Due Today`;
+
+      const text = `Dear ${name},\n\nA friendly reminder — the following task${merchantTasks.length > 1 ? 's' : ''} assigned to you are due today:\n\n${taskLines}\n──────────────────────────────\n\nPlease confirm completion or reach out if any assistance is needed.\n\nWarm regards,\nNandita`;
+
+      try {
+        await transporter.sendMail({
+          from: process.env.GMAIL_USER,
+          to: email,
+          subject,
+          text,
+        });
+        sent++;
+      } catch (mailErr) {
+        errors.push(`Failed to send to ${email}: ${String(mailErr)}`);
+      }
+    }
+
+    res.json({ sent, total: byMerchant.size, errors });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
 });
 
 export default app;
