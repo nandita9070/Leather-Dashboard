@@ -1057,7 +1057,7 @@ function TaskCard({ item, onToggle, onEdit, onDelete, onRestore, showCheckbox, i
         {item.status === 'Completed' && <CheckCircle2 size={16} />}
       </button>
       <div className="flex-1 space-y-1">
-        <div className="flex justify-between items-start pr-16">
+        <div className="flex justify-between items-start pr-24">
           <p className={`font-medium ${item.status === 'Completed' ? 'line-through text-gray-400' : ''}`}>
             {item.description}
           </p>
