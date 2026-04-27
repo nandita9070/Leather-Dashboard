@@ -321,31 +321,44 @@ app.get('/api/send-reminders', async (req, res) => {
     const nowIst = new Date(nowUtc.getTime() + istOffset);
     const todayIst = nowIst.toISOString().split('T')[0];
 
-    // Fetch all pending tasks due today along with merchant emails
+    // Fetch all pending tasks with a due date on or before today (covers due-today + overdue)
     const { data: tasks, error: tasksError } = await supabase
       .from('factory_entries')
       .select('*, merchants!inner(name, email), buyers(name)')
-      .eq('due_date', todayIst)
+      .lte('due_date', todayIst)
       .eq('status', 'Pending');
 
     if (tasksError) throw tasksError;
     if (!tasks || tasks.length === 0) {
-      return res.json({ sent: 0, message: 'No tasks due today.' });
+      return res.json({ sent: 0, message: 'No pending tasks due today or overdue.' });
     }
 
-    // Group tasks by merchant
-    const byMerchant = new Map<string, { name: string; email: string; tasks: typeof tasks }>();
+    type TaskRow = typeof tasks[number];
+
+    // Group into due-today and overdue buckets per merchant
+    const byMerchant = new Map<string, {
+      name: string;
+      email: string;
+      dueToday: TaskRow[];
+      overdue: TaskRow[];
+    }>();
+
     for (const task of tasks) {
       const merchant = task.merchants as { name: string; email: string };
       if (!merchant?.email) continue;
       if (!byMerchant.has(merchant.email)) {
-        byMerchant.set(merchant.email, { name: merchant.name, email: merchant.email, tasks: [] });
+        byMerchant.set(merchant.email, { name: merchant.name, email: merchant.email, dueToday: [], overdue: [] });
       }
-      byMerchant.get(merchant.email)!.tasks.push(task);
+      const bucket = byMerchant.get(merchant.email)!;
+      if (task.due_date === todayIst) {
+        bucket.dueToday.push(task);
+      } else {
+        bucket.overdue.push(task);
+      }
     }
 
     if (byMerchant.size === 0) {
-      return res.json({ sent: 0, message: 'No merchants with email addresses for today\'s tasks.' });
+      return res.json({ sent: 0, message: 'No merchants with email addresses for pending tasks.' });
     }
 
     // Set up Gmail SMTP transporter
@@ -357,21 +370,34 @@ app.get('/api/send-reminders', async (req, res) => {
       },
     });
 
+    const formatTask = (t: TaskRow) => {
+      const buyer = t.buyers as { name: string } | null;
+      const buyerLine = buyer?.name ? `Buyer: ${buyer.name}\n` : '';
+      return `──────────────────────────────\n${t.type} — ${t.description}\n${buyerLine}Due: ${t.due_date}`;
+    };
+
     let sent = 0;
     const errors: string[] = [];
 
-    for (const { name, email, tasks: merchantTasks } of byMerchant.values()) {
-      const taskLines = merchantTasks.map(t => {
-        const buyer = t.buyers as { name: string } | null;
-        const buyerLine = buyer?.name ? `Buyer: ${buyer.name}\n` : '';
-        return `──────────────────────────────\n${t.type} — ${t.description}\n${buyerLine}Due: ${t.due_date}`;
-      }).join('\n');
+    for (const { name, email, dueToday, overdue } of byMerchant.values()) {
+      const sections: string[] = [];
 
-      const subject = merchantTasks.length === 1
-        ? `Task Due Today: ${merchantTasks[0].description}`
-        : `${merchantTasks.length} Tasks Due Today`;
+      if (dueToday.length > 0) {
+        sections.push(`DUE TODAY:\n${dueToday.map(formatTask).join('\n')}`);
+      }
+      if (overdue.length > 0) {
+        sections.push(`OVERDUE — Pending Completion:\n${overdue.map(formatTask).join('\n')}`);
+      }
 
-      const text = `Dear ${name},\n\nA friendly reminder — the following task${merchantTasks.length > 1 ? 's' : ''} assigned to you are due today:\n\n${taskLines}\n──────────────────────────────\n\nPlease confirm completion or reach out if any assistance is needed.\n\nWarm regards,\nNandita`;
+      const totalCount = dueToday.length + overdue.length;
+      const subjectParts: string[] = [];
+      if (dueToday.length > 0) subjectParts.push(`${dueToday.length} Due Today`);
+      if (overdue.length > 0) subjectParts.push(`${overdue.length} Overdue`);
+      const subject = totalCount === 1 && dueToday.length === 1
+        ? `Task Due Today: ${dueToday[0].description}`
+        : `Task Reminder: ${subjectParts.join(' · ')}`;
+
+      const text = `Dear ${name},\n\nA friendly reminder regarding task${totalCount > 1 ? 's' : ''} assigned to you:\n\n${sections.join('\n\n')}\n──────────────────────────────\n\nPlease confirm completion or reach out if any assistance is needed.\n\nWarm regards,\nNandita`;
 
       try {
         await transporter.sendMail({
