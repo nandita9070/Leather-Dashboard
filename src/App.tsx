@@ -1376,25 +1376,24 @@ function MerchantDirectory({ merchants, selectedId, onSelect, items, buyers, onT
               <p className="text-xs text-gray-500">{m.email}</p>
             </button>
             <div className="flex items-center gap-1">
+              <button
+                onClick={() => onEditMerchant(m)}
+                className="p-1.5 text-gray-400 hover:text-brand-primary hover:bg-brand-primary/5 rounded-lg transition-colors"
+                title="Edit Merchant"
+              >
+                <Edit2 size={14} />
+              </button>
               {m.name !== 'Nandita' && (
-                <>
-                  <button
-                    onClick={() => onEditMerchant(m)}
-                    className="p-1.5 text-gray-400 hover:text-brand-primary hover:bg-brand-primary/5 rounded-lg transition-colors"
-                    title="Edit Merchant"
-                  >
-                    <Edit2 size={14} />
-                  </button>
-                  <button
-                    onClick={() => onDeleteMerchant(m.id)}
-                    className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                    title="Delete Merchant"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </>
+                <button
+                  onClick={() => onDeleteMerchant(m.id)}
+                  className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  title="Delete Merchant"
+                >
+                  <Trash2 size={14} />
+                </button>
               )}
               <ChevronRight size={20} className="text-gray-300 ml-1" />
+
             </div>
           </div>
         ))}
